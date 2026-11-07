@@ -1,0 +1,6 @@
+{
+  "name": "Econet BA Smart Attendance & Commission Management System",
+  "description": "Enterprise smart attendance tracking, QR card scanning, daily & attendance-based commission management, and CSV reporting for Zimbabwe telecommunications Brand Ambassadors and OMI sales teams.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
