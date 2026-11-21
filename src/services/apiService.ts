@@ -118,6 +118,12 @@ export const createBaWithAccount = async (account: {
   return { baId: data.baId };
 };
 
+export const applyStandardCommissionRate = async (): Promise<{ basUpdated: number; recordsUpdated: number }> => {
+  const response = await fetch(`${API_BASE_URL}/update-commission-rates`, { method: 'POST' });
+  const data = await parseResponse<{ basUpdated?: number; recordsUpdated?: number }>(response);
+  return { basUpdated: data.basUpdated ?? 0, recordsUpdated: data.recordsUpdated ?? 0 };
+};
+
 // Check if database is available
 export const checkDatabaseConnection = async (): Promise<boolean> => {
   try {
@@ -232,6 +238,7 @@ export const APIService = {
   logout,
   fetchAuthAccounts,
   provisionAuthAccount,
+  applyStandardCommissionRate,
   createBaWithAccount,
   fetchBAsFromAPI,
   saveBAToAPI,

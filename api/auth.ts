@@ -273,7 +273,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ) VALUES (
             ${`ba-${Date.now()}`}, ${baId}, ${fullName}, 'BA', 'Harare Central', 'First Street Branch',
             'unassigned', 'Unassigned', ${today}, 'active',
-            5.0, 3.0,
+            13.5, 0,
             ${`ECO_TOKEN_${randomBytes(6).toString('hex').toUpperCase()}`}, FALSE, ${`${today} (CAT)`}
           )
         `,

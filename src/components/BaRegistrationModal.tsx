@@ -36,7 +36,7 @@ export const BaRegistrationModal: React.FC<BaRegistrationModalProps> = ({
   const [consultantId, setConsultantId] = useState<string>(
     baToEdit?.salesConsultantId || consultants[0]?.id || ''
   );
-  const [dailyRate, setDailyRate] = useState<number>(baToEdit?.dailyCommissionRate || 5.0);
+  const [dailyRate, setDailyRate] = useState<number>(baToEdit?.dailyCommissionRate || 13.5);
   const [attendanceRate, setAttendanceRate] = useState<number>(
     baToEdit?.dailyAttendanceCommissionRate || 3.0
   );
@@ -85,7 +85,7 @@ export const BaRegistrationModal: React.FC<BaRegistrationModalProps> = ({
       salesConsultantName: assignedConsultant?.name || 'Unassigned',
       dateRegistered: baToEdit?.dateRegistered || getZimbabweDate(),
       status,
-      dailyCommissionRate: Number(dailyRate) || 5.0,
+      dailyCommissionRate: Number(dailyRate) || 13.5,
       dailyAttendanceCommissionRate: Number(attendanceRate) || 3.0,
       photoUrl,
       qrToken: token,

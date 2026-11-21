@@ -1,7 +1,13 @@
 import React, { useState, useMemo } from 'react';
-import { AttendanceRecord, SalesCategory, AttendanceStatus } from '../types';
+import { AttendanceRecord, BrandAmbassador, SalesCategory, AttendanceStatus } from '../types';
 import { DataService } from '../services/dataService';
-import { formatCurrency } from '../utils/dateUtils';
+import { APIService } from '../services/apiService';
+import { formatCurrency, getZimbabweDate } from '../utils/dateUtils';
+import {
+  downloadDailyRegisterPdf,
+  downloadMonthlyRegisterPdf,
+  type RegisterFilters,
+} from '../utils/registerPdf';
 import { RecordDetailModal } from './RecordDetailModal';
 import { ManualEntryModal } from './ManualEntryModal';
 import {
@@ -10,7 +16,6 @@ import {
   Download,
   PlusCircle,
   Clock,
-  QrCode,
   FileSpreadsheet,
   AlertCircle,
   Eye,
@@ -42,6 +47,9 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
   );
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [reportMonth, setReportMonth] = useState<string>(getZimbabweDate().slice(0, 7));
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -108,13 +116,87 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
     );
   };
 
-  const handleExportWithSignatures = () => {
-    DataService.downloadAttendanceRegisterWithSignatures(
-      startDate || undefined,
-      filterRegion !== 'All' ? filterRegion : undefined,
-      filterConsultant !== 'All' ? filterConsultant : undefined,
-      currentUserName
-    );
+  const handleExportWithSignatures = async () => {
+    await runPdfExport(async input => {
+      const date = startDate || getZimbabweDate();
+      const count = await downloadDailyRegisterPdf(date, input);
+      DataService.logAudit({
+        actor: currentUserName,
+        actorRole: currentUserRole,
+        action: 'REPORT_EXPORTED',
+        targetId: 'daily_register_pdf',
+        targetType: 'REPORT',
+        details: `Exported signed daily register PDF for ${date} (${count} BAs).`,
+      });
+    });
+  };
+
+  const handleExportMonthlyPdf = async () => {
+    if (!/^\d{4}-\d{2}$/.test(reportMonth)) {
+      setExportError('Choose the month to export.');
+      return;
+    }
+    await runPdfExport(async input => {
+      const count = await downloadMonthlyRegisterPdf(reportMonth, input);
+      DataService.logAudit({
+        actor: currentUserName,
+        actorRole: currentUserRole,
+        action: 'REPORT_EXPORTED',
+        targetId: 'monthly_register_pdf',
+        targetType: 'REPORT',
+        details: `Exported signed monthly register PDF for ${reportMonth} (${count} BAs).`,
+      });
+    });
+  };
+
+  const handleApplyStandardRate = async () => {
+    if (!window.confirm('Set every BA to $13.50 per day and correct their existing attendance earnings?')) return;
+    setExportError(null);
+    try {
+      const result = await APIService.applyStandardCommissionRate();
+      const [freshRecords] = await Promise.all([
+        DataService.refreshAttendanceFromDatabase(),
+        DataService.refreshBAsFromDatabase(),
+      ]);
+      setRecords([...freshRecords]);
+      setExportError(`Rates updated: ${result.basUpdated} BAs, ${result.recordsUpdated} attendance records.`);
+    } catch (error: unknown) {
+      setExportError(error instanceof Error ? error.message : 'Unable to update commission rates.');
+    }
+  };
+
+  const runPdfExport = async (
+    generate: (input: { bas: BrandAmbassador[]; records: AttendanceRecord[]; filters: RegisterFilters; preparedBy: string }) => Promise<void>
+  ) => {
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      // Pull the latest signed records so the PDF is complete.
+      const [freshRecords, freshBas] = await Promise.all([
+        DataService.refreshAttendanceFromDatabase(),
+        DataService.refreshBAsFromDatabase(),
+      ]);
+      const scopedConsultant =
+        currentUserRole === 'consultant' && assignedConsultantId ? assignedConsultantId : filterConsultant;
+      const inScope = (region: string, consultantId: string) =>
+        (filterRegion === 'All' || region === filterRegion) &&
+        (scopedConsultant === 'All' || consultantId === scopedConsultant);
+      await generate({
+        bas: freshBas.filter(ba => inScope(ba.region, ba.salesConsultantId)),
+        records: freshRecords.filter(record => inScope(record.region, record.salesConsultantId)),
+        filters: {
+          region: filterRegion !== 'All' ? filterRegion : undefined,
+          consultantName:
+            scopedConsultant !== 'All' ? consultants.find(c => c.id === scopedConsultant)?.name : undefined,
+        },
+        preparedBy: currentUserName,
+      });
+      setRecords([...freshRecords]);
+    } catch (error: unknown) {
+      setExportError(error instanceof Error ? error.message : 'Unable to create the PDF register.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const getStatusBadge = (status: AttendanceStatus, missingClockOut: boolean) => {
@@ -212,13 +294,43 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
           )}
 
           <button
-            onClick={handleExportWithSignatures}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors"
-            title="Download printable register with signatures (includes absent BAs)"
+            onClick={() => void handleExportWithSignatures()}
+            disabled={isExporting}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-xl shadow-xs transition-colors"
+            title="Download the signed register as a PDF for the 'Date From' filter (or today)"
           >
             <FileSpreadsheet className="w-4 h-4" />
-            Download Register with Signatures
+            {isExporting ? 'Preparing PDF…' : 'Daily Register PDF'}
           </button>
+
+          <div className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 pl-2.5 pr-1 py-1">
+            <input
+              type="month"
+              value={reportMonth}
+              onChange={event => setReportMonth(event.target.value)}
+              className="bg-transparent text-xs text-slate-800 outline-hidden"
+              aria-label="Month for the monthly register"
+            />
+            <button
+              onClick={() => void handleExportMonthlyPdf()}
+              disabled={isExporting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 rounded-lg transition-colors"
+              title="Download the full month-end register with every signature as a PDF"
+            >
+              <Download className="w-4 h-4" />
+              Month-End PDF
+            </button>
+          </div>
+
+          {currentUserRole === 'admin' && (
+            <button
+              onClick={() => void handleApplyStandardRate()}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition-colors"
+              title="Set every BA to the standard $13.50 daily commission"
+            >
+              Apply $13.50 rate
+            </button>
+          )}
 
           <button
             onClick={handleExportCsv}
@@ -228,6 +340,11 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
             Export CSV Register
           </button>
         </div>
+        {exportError && (
+          <div role="alert" className="basis-full p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800">
+            {exportError}
+          </div>
+        )}
       </div>
 
       {/* Filter Matrix */}
@@ -398,9 +515,7 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
                 <th className="py-3 px-3">Clock In</th>
                 <th className="py-3 px-3">Clock Out</th>
                 <th className="py-3 px-2 text-center">Hours</th>
-                <th className="py-3 px-3">Source</th>
                 <th className="py-3 px-3 text-right">Daily Comm</th>
-                <th className="py-3 px-3 text-right">Att. Comm</th>
                 <th className="py-3 px-3 text-right">Total Comm</th>
                 <th className="py-3 px-3 text-center">Action</th>
               </tr>
@@ -408,7 +523,7 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {paginatedRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="py-12 text-center text-slate-400">
+                  <td colSpan={11} className="py-12 text-center text-slate-400">
                     <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     No attendance records match the selected filters.
                   </td>
@@ -464,24 +579,8 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
                       {record.totalHours ? `${record.totalHours}h` : '0h'}
                     </td>
 
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      {record.source === 'qr_scan' ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 font-medium">
-                          <QrCode className="w-3 h-3 text-blue-600" /> QR Card
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-800 font-medium border border-amber-200">
-                          Manual
-                        </span>
-                      )}
-                    </td>
-
                     <td className="py-3 px-3 text-right font-mono font-semibold text-slate-700 whitespace-nowrap">
                       {formatCurrency(record.calculatedDailyCommission)}
-                    </td>
-
-                    <td className="py-3 px-3 text-right font-mono font-semibold text-slate-700 whitespace-nowrap">
-                      {formatCurrency(record.calculatedAttendanceCommission)}
                     </td>
 
                     <td className="py-3 px-3 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
