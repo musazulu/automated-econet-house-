@@ -24,37 +24,41 @@ let schemaReady: Promise<void> | null = null;
 export const ensureAuthSchema = (sql: ReturnType<typeof getDatabase>): Promise<void> => {
   if (!schemaReady) {
     schemaReady = (async () => {
-      await sql`
-        CREATE TABLE IF NOT EXISTS auth_accounts (
-          login_id TEXT PRIMARY KEY,
-          role TEXT NOT NULL CHECK (role IN ('admin', 'consultant', 'operator', 'ba')),
-          display_name TEXT NOT NULL,
-          ba_id TEXT,
-          consultant_id TEXT,
-          pin_salt TEXT NOT NULL,
-          pin_hash TEXT NOT NULL,
-          is_active BOOLEAN NOT NULL DEFAULT TRUE,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `;
-      await sql`
-        CREATE TABLE IF NOT EXISTS auth_sessions (
-          token_hash TEXT PRIMARY KEY,
-          login_id TEXT NOT NULL REFERENCES auth_accounts(login_id) ON DELETE CASCADE,
-          expires_at TIMESTAMPTZ NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `;
-      await sql`
-        CREATE TABLE IF NOT EXISTS auth_login_attempts (
-          subject_hash TEXT PRIMARY KEY,
-          failure_count INTEGER NOT NULL DEFAULT 0,
-          locked_until TIMESTAMPTZ,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `;
-      await sql`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)`;
+      // One transaction with an advisory lock stops concurrent cold starts from racing on CREATE TABLE.
+      await sql.transaction([
+        sql`SELECT pg_advisory_xact_lock(7305421)`,
+        sql`
+          CREATE TABLE IF NOT EXISTS auth_accounts (
+            login_id TEXT PRIMARY KEY,
+            role TEXT NOT NULL CHECK (role IN ('admin', 'consultant', 'operator', 'ba')),
+            display_name TEXT NOT NULL,
+            ba_id TEXT,
+            consultant_id TEXT,
+            pin_salt TEXT NOT NULL,
+            pin_hash TEXT NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `,
+        sql`
+          CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY,
+            login_id TEXT NOT NULL REFERENCES auth_accounts(login_id) ON DELETE CASCADE,
+            expires_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `,
+        sql`
+          CREATE TABLE IF NOT EXISTS auth_login_attempts (
+            subject_hash TEXT PRIMARY KEY,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            locked_until TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `,
+        sql`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)`,
+      ]);
     })().catch(error => {
       schemaReady = null;
       throw error;
