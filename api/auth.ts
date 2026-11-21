@@ -240,6 +240,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true, data: accounts });
     }
 
+    if (body.action === 'create-ba-account') {
+      const user = await requireRole(req, res, ['admin'], sql);
+      if (!user) return;
+      const fullName = typeof body.fullName === 'string' ? body.fullName.trim().replace(/\s+/g, ' ') : '';
+      const pin = body.pin;
+      if (fullName.length < 2 || fullName.length > 100 || !isValidPin(pin)) {
+        return res.status(400).json({ success: false, error: 'Enter the BA name and a six-digit PIN.' });
+      }
+
+      const latest = await sql`
+        SELECT COALESCE(MAX(CAST(substring(ba_id FROM '[0-9]+$') AS INTEGER)), 1000) AS max_number
+        FROM brand_ambassadors
+        WHERE ba_id ~ '^ECO-BA-[0-9]+$'
+      `;
+      const baId = `ECO-BA-${Number(latest[0]?.max_number ?? 1000) + 1}`;
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Harare',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+      const { salt, hash } = createPinHash(pin);
+
+      await sql.transaction([
+        sql`
+          INSERT INTO brand_ambassadors (
+            id, ba_id, full_name, category, region, branch,
+            sales_consultant_id, sales_consultant_name, date_registered, status,
+            daily_commission_rate, daily_attendance_commission_rate,
+            qr_token, qr_revoked, qr_generated_at
+          ) VALUES (
+            ${`ba-${Date.now()}`}, ${baId}, ${fullName}, 'BA', 'Harare Central', 'First Street Branch',
+            'unassigned', 'Unassigned', ${today}, 'active',
+            5.0, 3.0,
+            ${`ECO_TOKEN_${randomBytes(6).toString('hex').toUpperCase()}`}, FALSE, ${`${today} (CAT)`}
+          )
+        `,
+        sql`
+          INSERT INTO auth_accounts (login_id, role, display_name, ba_id, pin_salt, pin_hash, is_active)
+          VALUES (${baId.toLowerCase()}, 'ba', ${fullName}, ${baId}, ${salt}, ${hash}, TRUE)
+        `,
+      ]);
+      return res.status(201).json({
+        success: true,
+        baId,
+        message: `${fullName} registered as ${baId}.`,
+      });
+    }
+
     if (body.action === 'provision-account') {
       const user = await requireRole(req, res, ['admin'], sql);
       if (!user) return;

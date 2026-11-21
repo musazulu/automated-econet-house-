@@ -104,6 +104,20 @@ export const provisionAuthAccount = async (account: {
   await parseResponse<{ success: boolean }>(response);
 };
 
+export const createBaWithAccount = async (account: {
+  fullName: string;
+  pin: string;
+}): Promise<{ baId: string }> => {
+  const response = await fetch(`${API_BASE_URL}/auth`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'create-ba-account', ...account }),
+  });
+  const data = await parseResponse<{ baId?: string }>(response);
+  if (!data.baId) throw new Error('The server did not return the new BA ID.');
+  return { baId: data.baId };
+};
+
 // Check if database is available
 export const checkDatabaseConnection = async (): Promise<boolean> => {
   try {
@@ -218,6 +232,7 @@ export const APIService = {
   logout,
   fetchAuthAccounts,
   provisionAuthAccount,
+  createBaWithAccount,
   fetchBAsFromAPI,
   saveBAToAPI,
   fetchAttendanceFromAPI,

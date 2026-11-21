@@ -30,7 +30,6 @@ export const AccessManagement: React.FC = () => {
       ]);
       setAccounts(nextAccounts);
       setBas(nextBas.filter(ba => ba.status === 'active'));
-      setBaId(current => current || nextBas.find(ba => ba.status === 'active')?.baId || '');
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load account details.');
     } finally {
@@ -46,13 +45,36 @@ export const AccessManagement: React.FC = () => {
     event.preventDefault();
     setError(null);
     setNotice(null);
-    const selectedBa = bas.find(ba => ba.baId === baId);
-    const accountLoginId = selectedBa ? selectedBa.baId : loginId.trim();
-    const accountName = selectedBa ? selectedBa.fullName : displayName.trim();
     if (!/^\d{6}$/.test(pin)) {
       setError('Use a six-digit PIN.');
       return;
     }
+
+    if (role === 'ba' && !baId) {
+      const baName = displayName.trim();
+      if (baName.length < 2) {
+        setError('Enter the Brand Ambassador name.');
+        return;
+      }
+      setIsSaving(true);
+      try {
+        const created = await APIService.createBaWithAccount({ fullName: baName, pin });
+        await DataService.refreshBAsFromDatabase();
+        setPin('');
+        setDisplayName('');
+        setNotice(`${baName} registered. BA ID: ${created.baId}. Give the BA this ID and their PIN to sign in.`);
+        await refresh();
+      } catch (saveError: unknown) {
+        setError(saveError instanceof Error ? saveError.message : 'Unable to create the BA account.');
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
+    const selectedBa = bas.find(ba => ba.baId === baId);
+    const accountLoginId = selectedBa ? selectedBa.baId : loginId.trim();
+    const accountName = selectedBa ? selectedBa.fullName : displayName.trim();
     if (!selectedBa && (accountName.length < 2 || !accountLoginId)) {
       setError('Enter an account name and email address.');
       return;
@@ -136,17 +158,31 @@ export const AccessManagement: React.FC = () => {
           </label>
 
           {role === 'ba' ? (
-            <label className="block text-sm font-medium text-slate-700">
-              Active Brand Ambassador
-              <select
-                value={baId}
-                onChange={event => setBaId(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                required
-              >
-                {bas.map(ba => <option key={ba.baId} value={ba.baId}>{ba.fullName} ({ba.baId})</option>)}
-              </select>
-            </label>
+            <>
+              <label className="block text-sm font-medium text-slate-700">
+                Brand Ambassador
+                <select
+                  value={baId}
+                  onChange={event => setBaId(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                >
+                  <option value="">+ New Brand Ambassador</option>
+                  {bas.map(ba => <option key={ba.baId} value={ba.baId}>Reset PIN: {ba.fullName} ({ba.baId})</option>)}
+                </select>
+              </label>
+              {!baId && (
+                <label className="block text-sm font-medium text-slate-700">
+                  BA full name
+                  <input
+                    value={displayName}
+                    onChange={event => setDisplayName(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                    placeholder="e.g. Tendai Moyo"
+                    required
+                  />
+                </label>
+              )}
+            </>
           ) : (
             <>
               <label className="block text-sm font-medium text-slate-700">
@@ -207,11 +243,11 @@ export const AccessManagement: React.FC = () => {
           </p>
           <button
             type="submit"
-            disabled={isSaving || (role === 'ba' && bas.length === 0)}
+            disabled={isSaving}
             className="inline-flex items-center justify-center gap-2 w-full bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-semibold rounded-lg py-2.5"
           >
             <KeyRound className="w-4 h-4" />
-            {isSaving ? 'Saving…' : 'Save account PIN'}
+            {isSaving ? 'Saving…' : role === 'ba' && !baId ? 'Create BA account' : 'Save account PIN'}
           </button>
         </form>
 

@@ -30,9 +30,9 @@ For local development, `npm run dev` starts only the Vite frontend and does not 
 ## Create staff and BA accounts
 
 1. Sign in as an administrator and open **Sign-in Accounts**.
-2. Select a BA or staff role. Choose a BA from the list, or enter staff name, email, and (for consultants) the assigned consultant.
+2. For a new BA, choose **Brand Ambassador → + New Brand Ambassador**, enter only the BA's name and a six-digit PIN. The system registers the BA with the next BA ID (for example `ECO-BA-1002`) and shows it; give that ID and the PIN to the BA. Other BA details can be completed later in **BA Management**. For staff, enter name, email, and (for consultants) the assigned consultant.
 3. Set a separate six-digit PIN and share it directly with that account holder.
-4. For a PIN reset, set a new PIN in the same screen and send it privately to the user. Saved PINs are not displayed.
+4. For a PIN reset, choose the existing BA or staff account, set a new PIN in the same screen and send it privately to the user. Saved PINs are not displayed.
 
 Users open the same main application link. Staff enter their email and PIN; BAs enter their BA ID and PIN. A BA's account is tied to their BA record and becomes unavailable if the BA is inactive.
 
