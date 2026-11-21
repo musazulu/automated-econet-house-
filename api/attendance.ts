@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getDatabase, requireRole } from '../src/server/auth';
-import { isTimeLate } from '../src/utils/dateUtils';
+import { getDatabase, requireRole } from '../src/server/auth.js';
+import { isTimeLate } from '../src/utils/dateUtils.js';
 
 const getHarareClock = (): { date: string; time: string } => {
   const parts = new Intl.DateTimeFormat('en-CA', {

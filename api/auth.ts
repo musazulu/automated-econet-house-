@@ -12,7 +12,7 @@ import {
   setSessionCookie,
   verifyPin,
   type AccountRole,
-} from '../src/server/auth';
+} from '../src/server/auth.js';
 
 const SESSION_SECONDS = 60 * 60 * 12;
 const MAX_LOGIN_FAILURES = 5;
