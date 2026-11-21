@@ -62,6 +62,11 @@ const daysInMonth = (month: string): number => {
 
 const dateKey = (month: string, day: number): string => `${month}-${String(day).padStart(2, '0')}`;
 
+const money = (amount: number): string => `$${amount.toFixed(2)}`;
+
+const dailyRateOf = (ba: BrandAmbassador): number =>
+  Number.isFinite(ba.dailyCommissionRate) && ba.dailyCommissionRate > 0 ? ba.dailyCommissionRate : 13.5;
+
 const weekdayOf = (date: string): number => new Date(`${date}T00:00:00Z`).getUTCDay();
 
 const shortDate = (date: string): string =>
@@ -304,27 +309,40 @@ export const downloadMonthlyRegisterPdf = async (month: string, input: RegisterI
       return isNonWorkingDay(key) ? '–' : 'A';
     });
     const counts = countsFor(ba.baId);
-    return [`${ba.fullName}\n${ba.baId}`, ...marks, String(counts.attended), String(counts.late), String(counts.absent)];
+    const rate = dailyRateOf(ba);
+    return [
+      `${ba.fullName}\n${ba.baId}`,
+      ...marks,
+      String(counts.attended),
+      String(counts.late),
+      String(counts.absent),
+      money(rate),
+      money(counts.attended * rate),
+    ];
   });
 
+  // Day columns share whatever width the fixed columns leave, so 31-day months still fit the page.
+  const dayWidth = Math.min(6, (273 - 36 - 10 - 9 - 9 - 14 - 17) / totalDays);
   const dayColumnStyles: Record<number, { cellWidth: number; halign: 'center' }> = {};
-  for (let column = 1; column <= totalDays; column += 1) dayColumnStyles[column] = { cellWidth: 6, halign: 'center' };
+  for (let column = 1; column <= totalDays; column += 1) dayColumnStyles[column] = { cellWidth: dayWidth, halign: 'center' };
   const totalsStart = totalDays + 1;
 
   autoTable(doc, {
     startY,
     margin: { left: 12, right: 12 },
-    head: [['Brand Ambassador', ...dayHeaders, 'Days', 'Late', 'Abs.']],
+    head: [['Brand Ambassador', ...dayHeaders, 'Days', 'Late', 'Abs.', 'Daily Comm', 'Total Comm']],
     body: gridBody,
     theme: 'grid',
     styles: { fontSize: 7.5, cellPadding: 0.8, valign: 'middle', lineColor: [226, 232, 240] },
     headStyles: { fillColor: BLUE, textColor: 255, halign: 'center', fontSize: 7 },
     columnStyles: {
-      0: { cellWidth: 40, halign: 'left' },
+      0: { cellWidth: 36, halign: 'left' },
       ...dayColumnStyles,
       [totalsStart]: { cellWidth: 10, halign: 'center', fontStyle: 'bold' },
       [totalsStart + 1]: { cellWidth: 9, halign: 'center' },
       [totalsStart + 2]: { cellWidth: 9, halign: 'center' },
+      [totalsStart + 3]: { cellWidth: 14, halign: 'right' },
+      [totalsStart + 4]: { cellWidth: 17, halign: 'right', fontStyle: 'bold', textColor: GREEN },
     },
     didParseCell: data => {
       if (data.section !== 'body' || data.column.index < 1 || data.column.index > totalDays) return;
@@ -426,8 +444,8 @@ export const downloadMonthlyRegisterPdf = async (month: string, input: RegisterI
     });
 
     const tableEnd = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
-    let footerY = tableEnd + 8;
-    if (footerY > doc.internal.pageSize.getHeight() - 30) {
+    let footerY = tableEnd + 6;
+    if (footerY > doc.internal.pageSize.getHeight() - 34) {
       doc.addPage('a4', 'portrait');
       footerY = 20;
     }
@@ -439,8 +457,15 @@ export const downloadMonthlyRegisterPdf = async (month: string, input: RegisterI
       12,
       footerY
     );
+    const baRate = dailyRateOf(ba);
+    doc.setTextColor(...GREEN);
+    doc.text(
+      `Daily comm: ${money(baRate)}   ·   Total commission: ${counts.attended} days × ${money(baRate)} = ${money(counts.attended * baRate)}`,
+      12,
+      footerY + 6
+    );
     doc.setFont('helvetica', 'normal');
-    drawSignOff(doc, footerY + 16, preparedBy);
+    drawSignOff(doc, footerY + 18, preparedBy);
   });
 
   addPageNumbers(doc, getZimbabweTimestamp());
