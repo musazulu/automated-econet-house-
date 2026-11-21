@@ -23,6 +23,7 @@ export const PrintableCardModal: React.FC<PrintableCardModalProps> = ({
   const [showBackSide, setShowBackSide] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [confirmNotice, setConfirmNotice] = useState<string | null>(null);
+  const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -30,17 +31,23 @@ export const PrintableCardModal: React.FC<PrintableCardModalProps> = ({
     window.print();
   };
 
-  const handleRegenerateQr = () => {
+  const handleRegenerateQr = async () => {
     if (confirm('Are you sure you want to regenerate this QR credential? Any physical cards printed with the old QR code will immediately be invalidated.')) {
       setIsRegenerating(true);
-      const updated = DataService.revokeAndRegenerateQrToken(currentBa.baId, 'Admin User');
-      if (updated) {
-        setCurrentBa(updated);
-        onCardUpdated?.(updated);
-        setConfirmNotice('New secure QR token generated successfully.');
-        setTimeout(() => setConfirmNotice(null), 3000);
+      setErrorNotice(null);
+      try {
+        const updated = await DataService.revokeAndRegenerateQrToken(currentBa.baId, 'Administrator');
+        if (updated) {
+          setCurrentBa(updated);
+          onCardUpdated?.(updated);
+          setConfirmNotice('New secure QR token generated successfully.');
+          setTimeout(() => setConfirmNotice(null), 3000);
+        }
+      } catch (error: unknown) {
+        setErrorNotice(error instanceof Error ? error.message : 'Unable to regenerate QR credential.');
+      } finally {
+        setIsRegenerating(false);
       }
-      setIsRegenerating(false);
     }
   };
 
@@ -70,6 +77,11 @@ export const PrintableCardModal: React.FC<PrintableCardModalProps> = ({
           <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-semibold text-emerald-800 flex items-center gap-2 no-print">
             <Check className="w-4 h-4 text-emerald-600" />
             {confirmNotice}
+          </div>
+        )}
+        {errorNotice && (
+          <div role="alert" className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs font-semibold text-rose-800 no-print">
+            {errorNotice}
           </div>
         )}
 

@@ -108,6 +108,15 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
     );
   };
 
+  const handleExportWithSignatures = () => {
+    DataService.downloadAttendanceRegisterWithSignatures(
+      startDate || undefined,
+      filterRegion !== 'All' ? filterRegion : undefined,
+      filterConsultant !== 'All' ? filterConsultant : undefined,
+      currentUserName
+    );
+  };
+
   const getStatusBadge = (status: AttendanceStatus, missingClockOut: boolean) => {
     if (missingClockOut) {
       return (
@@ -201,6 +210,15 @@ export const AttendanceRegister: React.FC<AttendanceRegisterProps> = ({
               Record Attendance / Exception
             </button>
           )}
+
+          <button
+            onClick={handleExportWithSignatures}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors"
+            title="Download printable register with signatures (includes absent BAs)"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Download Register with Signatures
+          </button>
 
           <button
             onClick={handleExportCsv}

@@ -1,13 +1,19 @@
 import React, { useState } from 'react';
-import { UserRole, UserProfile } from './types';
-import { INITIAL_USERS } from './data/initialData';
+import { AccountRole, AuthenticatedUser, UserProfile } from './types';
 import { DataService } from './services/dataService';
 import { getZimbabweTime, getZimbabweDate } from './utils/dateUtils';
+import { APIService } from './services/apiService';
 
 // Components
+import { AccessManagement } from './components/AccessManagement';
+import { AuthScreen } from './components/AuthScreen';
+import { BaSelfServicePortal } from './components/BaSelfServicePortal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ConsultantDashboard } from './components/ConsultantDashboard';
+import { LiveAttendanceMonitor } from './components/LiveAttendanceMonitor';
 import { AttendanceScanner } from './components/AttendanceScanner';
+import { AttendanceQrDisplay } from './components/AttendanceQrDisplay';
+import { DigitalSignatureKiosk } from './components/DigitalSignatureKiosk';
 import { AttendanceRegister } from './components/AttendanceRegister';
 import { BaManagement } from './components/BaManagement';
 import { TeamsManagement } from './components/TeamsManagement';
@@ -21,6 +27,7 @@ import { AcceptanceTestsRunner } from './components/AcceptanceTestsRunner';
 import {
   LayoutDashboard,
   QrCode,
+  Camera,
   FileSpreadsheet,
   Users,
   Briefcase,
@@ -29,6 +36,8 @@ import {
   Send,
   History,
   CheckCircle,
+  Activity,
+  LogOut,
   RotateCcw,
   Menu,
   X,
@@ -40,7 +49,16 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<UserProfile>(INITIAL_USERS[0]); // Default Admin: Tinashe Moyo
+  const [sessionUser, setSessionUser] = useState<AuthenticatedUser | null>(null);
+  const [baProfile, setBaProfile] = useState<{
+    baId: string;
+    fullName: string;
+    dateRegistered: string;
+    status: 'active' | 'inactive';
+  } | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [setupRequired, setSetupRequired] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [showArchitectureModal, setShowArchitectureModal] = useState<boolean>(false);
@@ -52,15 +70,70 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleUserSwitch = (userId: string) => {
-    const user = INITIAL_USERS.find(u => u.id === userId);
-    if (user) {
-      setCurrentUser(user);
-      // If operator switches to tab not allowed, redirect to scanner
-      if (user.role === 'operator' && activeTab !== 'scanner' && activeTab !== 'tests') {
-        setActiveTab('scanner');
-      }
+  React.useEffect(() => {
+    let active = true;
+    APIService.getAuthSession()
+      .then(result => {
+        if (!active) return;
+        setSessionUser(result.user);
+        setBaProfile(result.baProfile);
+        setSetupRequired(result.setupRequired);
+        if (result.user?.role === 'operator') setActiveTab('kiosk');
+      })
+      .catch(error => {
+        if (active) {
+          setAuthError(error instanceof Error ? error.message : 'Unable to verify your sign-in session.');
+        }
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleAuthenticated = (user: AuthenticatedUser) => {
+    setSessionUser(user);
+    setBaProfile(null);
+    setAuthError(null);
+    setSetupRequired(false);
+    setActiveTab(user.role === 'operator' ? 'kiosk' : 'dashboard');
+    if (user.role === 'ba') {
+      APIService.getAuthSession()
+        .then(result => setBaProfile(result.baProfile))
+        .catch(error => setAuthError(error instanceof Error ? error.message : 'Unable to load your registration.'));
     }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await APIService.logout();
+      setSessionUser(null);
+      setBaProfile(null);
+      setAuthError(null);
+      setActiveTab('dashboard');
+    } catch (error: unknown) {
+      alert(error instanceof Error ? `Unable to sign out: ${error.message}` : 'Unable to sign out.');
+    }
+  };
+
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center text-slate-500">Checking secure sign-in…</div>;
+  }
+  if (!sessionUser) {
+    return <AuthScreen setupRequired={setupRequired} initialError={authError} onAuthenticated={handleAuthenticated} />;
+  }
+  if (sessionUser.role === 'ba') {
+    return <BaSelfServicePortal user={sessionUser} profile={baProfile} onLogout={() => void handleLogout()} />;
+  }
+
+  const currentUser: UserProfile = {
+    id: sessionUser.loginId,
+    name: sessionUser.displayName,
+    email: sessionUser.loginId,
+    role: sessionUser.role as Exclude<AccountRole, 'ba'>,
+    assignedTeamId: sessionUser.consultantId,
   };
 
   const handleResetDemoData = () => {
@@ -78,17 +151,35 @@ export default function App() {
       roles: ['admin', 'consultant'],
     },
     {
-      id: 'scanner',
-      label: 'Scan Attendance',
+      id: 'kiosk',
+      label: 'Digital Attendance Kiosk',
       icon: QrCode,
       roles: ['admin', 'consultant', 'operator'],
       highlight: true,
+    },
+    {
+      id: 'qr-station',
+      label: 'QR Station (Phone Scan)',
+      icon: QrCode,
+      roles: ['admin', 'consultant', 'operator'],
+    },
+    {
+      id: 'scanner',
+      label: 'Camera Scanner (Legacy)',
+      icon: Camera,
+      roles: ['admin', 'consultant', 'operator'],
     },
     {
       id: 'register',
       label: 'Attendance Register',
       icon: FileSpreadsheet,
       roles: ['admin', 'consultant'],
+    },
+    {
+      id: 'live-attendance',
+      label: 'Live Attendance',
+      icon: Activity,
+      roles: ['admin'],
     },
     {
       id: 'bas',
@@ -124,6 +215,12 @@ export default function App() {
       id: 'audit',
       label: 'Audit Trail',
       icon: History,
+      roles: ['admin'],
+    },
+    {
+      id: 'access',
+      label: 'Sign-in Accounts',
+      icon: ShieldCheck,
       roles: ['admin'],
     },
     {
@@ -178,7 +275,7 @@ export default function App() {
             <strong className="text-slate-900">{harareTime}</strong>
           </div>
 
-          {/* Right: Role Switcher & Database Architecture Info */}
+          {/* Right: Signed-in user and database information */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowArchitectureModal(true)}
@@ -189,22 +286,19 @@ export default function App() {
               <span>Production Setup</span>
             </button>
 
-            {/* Persona Switcher Dropdown */}
-            <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200">
-              <span className="text-[10px] font-bold text-slate-400 uppercase hidden sm:inline ml-1">
-                Active User:
-              </span>
-              <select
-                value={currentUser.id}
-                onChange={e => handleUserSwitch(e.target.value)}
-                className="text-xs font-semibold bg-white border border-slate-200 rounded-lg py-1 px-2 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:block text-right">
+                <p className="text-xs font-semibold text-slate-800">{currentUser.name}</p>
+                <p className="text-[10px] uppercase text-slate-500">{currentUser.role}</p>
+              </div>
+              <button
+                onClick={() => void handleLogout()}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                title="Sign out"
               >
-                <option value="USR-ADM-01">👑 Tinashe Moyo (Administrator)</option>
-                <option value="USR-CON-01">💼 Chipo Mutasa (Sales Consultant - Harare Central)</option>
-                <option value="USR-CON-02">💼 Farai Sithole (Sales Consultant - Chitungwiza)</option>
-                <option value="USR-CON-03">💼 Nomalanga Ndlovu (Sales Consultant - Bulawayo)</option>
-                <option value="USR-OPR-01">📱 Nyasha Chiweshe (Attendance Operator)</option>
-              </select>
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline">Sign out</span>
+              </button>
             </div>
           </div>
         </div>
@@ -275,16 +369,18 @@ export default function App() {
               );
             })}
 
-            <div className="pt-4 mt-3 border-t border-slate-100 space-y-1">
-              <button
-                onClick={handleResetDemoData}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2 rounded-xl text-xs text-slate-500 hover:text-rose-700 hover:bg-rose-50 transition-colors"
-                title="Restore sample demonstration dataset"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset Demo Seed Data</span>
-              </button>
-            </div>
+            {currentUser.role === 'admin' && (
+              <div className="pt-4 mt-3 border-t border-slate-100 space-y-1">
+                <button
+                  onClick={handleResetDemoData}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 rounded-xl text-xs text-slate-500 hover:text-rose-700 hover:bg-rose-50 transition-colors"
+                  title="Restore sample demonstration dataset"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset Demo Seed Data</span>
+                </button>
+              </div>
+            )}
           </div>
         </aside>
 
@@ -304,7 +400,25 @@ export default function App() {
             )
           )}
 
-          {/* TAB: QR ATTENDANCE SCANNER */}
+          {/* TAB: DIGITAL ATTENDANCE KIOSK (NEW - MAIN METHOD) */}
+          {activeTab === 'kiosk' && (
+            <DigitalSignatureKiosk
+              actorName={currentUser.name}
+              actorRole={currentUser.role}
+              onRecordUpdated={() => {}}
+            />
+          )}
+
+          {/* TAB: QR ATTENDANCE STATION (BA PHONES SCAN THIS) */}
+          {activeTab === 'qr-station' && (
+            <AttendanceQrDisplay
+              actorName={currentUser.name}
+              actorRole={currentUser.role}
+              onRecordUpdated={() => {}}
+            />
+          )}
+
+          {/* TAB: CAMERA QR SCANNER (LEGACY - CAMERA SCANS BA CARDS) */}
           {activeTab === 'scanner' && (
             <AttendanceScanner
               actorName={currentUser.name}
@@ -321,6 +435,8 @@ export default function App() {
               assignedConsultantId={currentUser.assignedTeamId}
             />
           )}
+
+          {activeTab === 'live-attendance' && <LiveAttendanceMonitor />}
 
           {/* TAB: BA MANAGEMENT */}
           {activeTab === 'bas' && (
@@ -356,6 +472,8 @@ export default function App() {
 
           {/* TAB: AUDIT LOG */}
           {activeTab === 'audit' && <AuditLogViewer />}
+
+          {activeTab === 'access' && currentUser.role === 'admin' && <AccessManagement />}
 
           {/* TAB: ACCEPTANCE TESTS */}
           {activeTab === 'tests' && (

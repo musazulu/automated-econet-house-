@@ -57,7 +57,7 @@ export const BaManagement: React.FC<BaManagementProps> = ({
     return true;
   });
 
-  const handleToggleStatus = (ba: BrandAmbassador) => {
+  const handleToggleStatus = async (ba: BrandAmbassador) => {
     if (currentUserRole !== 'admin') {
       alert('Only administrators are authorised to deactivate or reactivate BAs.');
       return;
@@ -67,8 +67,12 @@ export const BaManagement: React.FC<BaManagementProps> = ({
     const confirmed = confirm(`Are you sure you want to mark ${ba.fullName} (${ba.baId}) as ${newStatus.toUpperCase()}?`);
     if (confirmed) {
       const updated: BrandAmbassador = { ...ba, status: newStatus };
-      DataService.saveBA(updated, currentUserName);
-      reloadData();
+      try {
+        await DataService.saveBA(updated, currentUserName);
+        reloadData();
+      } catch (error: unknown) {
+        alert(error instanceof Error ? error.message : 'Unable to update BA status.');
+      }
     }
   };
 

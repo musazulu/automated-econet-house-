@@ -4,6 +4,22 @@
  */
 
 export type UserRole = 'admin' | 'consultant' | 'operator';
+export type AccountRole = UserRole | 'ba';
+
+export interface AuthenticatedUser {
+  loginId: string;
+  role: AccountRole;
+  displayName: string;
+  baId?: string;
+  consultantId?: string;
+}
+
+export interface BaSelfServiceProfile {
+  baId: string;
+  fullName: string;
+  dateRegistered: string;
+  status: 'active' | 'inactive';
+}
 
 export type SalesCategory = 'BA' | 'OMI' | 'Direct Sales Agent' | 'Kiosk Rep';
 
@@ -90,6 +106,7 @@ export interface AttendanceRecord {
   isCompleted: boolean;
   missingClockOut: boolean;
   isLate: boolean;
+  signatureDataUrl?: string; // Base64 PNG signature image
   exceptionType?: string;
   exceptionReason?: string;
   exceptionApprovalStatus?: ExceptionApprovalStatus;

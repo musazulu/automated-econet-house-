@@ -67,12 +67,14 @@ export function calculateHoursWorked(clockIn: string | null, clockOut: string | 
 /**
  * Check if a time string is later than the cutoff string (e.g. "08:15:00" vs "08:15:00")
  */
-export function isTimeLate(timeStr: string | null, cutoffStr: string = '08:15:00'): boolean {
+export function isTimeLate(timeStr: string | null, cutoffStr: string = '08:00:00'): boolean {
   if (!timeStr) return false;
   try {
-    const [h1, m1] = timeStr.split(':').map(Number);
-    const [h2, m2] = cutoffStr.split(':').map(Number);
-    return h1 > h2 || (h1 === h2 && m1 > m2);
+    const toSeconds = (value: string) => {
+      const [hours, minutes, seconds = '0'] = value.split(':');
+      return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
+    };
+    return toSeconds(timeStr) > toSeconds(cutoffStr);
   } catch {
     return false;
   }

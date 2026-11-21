@@ -28,8 +28,25 @@ import {
   isTimeLate,
 } from '../utils/dateUtils';
 import { buildCsvString, downloadCsvFile } from '../utils/csvExport';
+import { APIService } from './apiService';
 
 const STORAGE_KEY = 'ECONET_BA_DATA_V1';
+let useDatabaseAPI = false;
+
+// Check if database is available on initialization
+(async () => {
+  try {
+    useDatabaseAPI = await APIService.checkDatabaseConnection();
+    if (useDatabaseAPI) {
+      console.log('✅ Database connected - using API for data sync');
+    } else {
+      console.log('📦 Using localStorage fallback');
+    }
+  } catch (error) {
+    console.log('📦 Database check failed - using localStorage fallback');
+    useDatabaseAPI = false;
+  }
+})();
 
 interface AppState {
   users: UserProfile[];
@@ -46,7 +63,14 @@ function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const savedState = JSON.parse(raw) as AppState;
+      return {
+        ...savedState,
+        commissionSettings: {
+          ...savedState.commissionSettings,
+          reportingTimeCutoff: '08:00',
+        },
+      };
     }
   } catch (e) {
     console.error('Failed to load local state:', e);
@@ -101,6 +125,30 @@ export const DataService = {
 
   // BAS
   getBAs(): BrandAmbassador[] {
+    // Fetch from API in background to update cache
+    if (useDatabaseAPI) {
+      APIService.fetchBAsFromAPI()
+        .then(basFromAPI => {
+          currentState.bas = basFromAPI;
+          saveState(currentState);
+        })
+        .catch(err => console.error('Background BA sync failed:', err));
+    }
+    return currentState.bas;
+  },
+
+  // Force refresh from database
+  async refreshBAsFromDatabase(): Promise<BrandAmbassador[]> {
+    if (useDatabaseAPI) {
+      try {
+        const basFromAPI = await APIService.fetchBAsFromAPI();
+        currentState.bas = basFromAPI;
+        saveState(currentState);
+        return basFromAPI;
+      } catch (error) {
+        console.error('Failed to refresh BAs from database:', error);
+      }
+    }
     return currentState.bas;
   },
 
@@ -112,9 +160,10 @@ export const DataService = {
     return currentState.bas.find(b => b.qrToken === token);
   },
 
-  saveBA(ba: BrandAmbassador, actorName: string = 'System Admin'): BrandAmbassador {
+  async saveBA(ba: BrandAmbassador, actorName: string = 'System Admin'): Promise<BrandAmbassador> {
     const existingIndex = currentState.bas.findIndex(b => b.id === ba.id || b.baId === ba.baId);
     const isNew = existingIndex === -1;
+    await APIService.saveBAToAPI(ba, isNew);
     if (isNew) {
       currentState.bas.unshift(ba);
       this.logAudit({
@@ -140,35 +189,64 @@ export const DataService = {
     return ba;
   },
 
-  revokeAndRegenerateQrToken(baId: string, actorName: string = 'System Admin'): BrandAmbassador | null {
+  async revokeAndRegenerateQrToken(baId: string, actorName: string = 'System Admin'): Promise<BrandAmbassador | null> {
     const ba = currentState.bas.find(b => b.baId === baId || b.id === baId);
     if (!ba) return null;
 
     const oldToken = ba.qrToken;
     const randPart = Math.random().toString(36).substring(2, 10).toUpperCase();
     const timePart = Date.now().toString(36).toUpperCase();
-    ba.qrToken = `ECO_TOKEN_${randPart}_${timePart}`;
-    ba.qrRevoked = false;
-    ba.qrGeneratedAt = getZimbabweTimestamp();
+    const updatedBa: BrandAmbassador = {
+      ...ba,
+      qrToken: `ECO_TOKEN_${randPart}_${timePart}`,
+      qrRevoked: false,
+      qrGeneratedAt: getZimbabweTimestamp(),
+    };
+    await APIService.saveBAToAPI(updatedBa, false);
+    currentState.bas[currentState.bas.indexOf(ba)] = updatedBa;
 
     this.logAudit({
       actor: actorName,
       actorRole: 'admin',
       action: 'QR_TOKEN_REVOKED',
-      targetId: ba.baId,
+      targetId: updatedBa.baId,
       targetType: 'BA',
-      details: `Revoked previous QR token and issued secure token for ${ba.fullName}.`,
+      details: `Revoked previous QR token and issued secure token for ${updatedBa.fullName}.`,
       oldValue: oldToken,
-      newValue: ba.qrToken,
+      newValue: updatedBa.qrToken,
       reason: 'Security key rotation or reported compromised badge.',
     });
 
     saveState(currentState);
-    return ba;
+    return updatedBa;
   },
 
   // ATTENDANCE
   getAttendanceRecords(): AttendanceRecord[] {
+    // Fetch from API in background to update cache
+    if (useDatabaseAPI) {
+      APIService.fetchAttendanceFromAPI()
+        .then(recordsFromAPI => {
+          currentState.attendanceRecords = recordsFromAPI;
+          saveState(currentState);
+        })
+        .catch(err => console.error('Background attendance sync failed:', err));
+    }
+    return currentState.attendanceRecords;
+  },
+
+  // Force refresh from database
+  async refreshAttendanceFromDatabase(): Promise<AttendanceRecord[]> {
+    if (useDatabaseAPI) {
+      try {
+        const recordsFromAPI = await APIService.fetchAttendanceFromAPI();
+        currentState.attendanceRecords = recordsFromAPI;
+        saveState(currentState);
+        return recordsFromAPI;
+      } catch (error) {
+        console.error('Failed to refresh attendance from database:', error);
+      }
+    }
     return currentState.attendanceRecords;
   },
 
@@ -183,73 +261,45 @@ export const DataService = {
     ba?: BrandAmbassador
   ): { daily: number; attendance: number; total: number } {
     const baObj = ba || currentState.bas.find(b => b.baId === record.baId || b.id === record.baInternalId);
-    const dailyRate = baObj ? baObj.dailyCommissionRate : settings.defaultDailyRate;
-    const attendanceRate = baObj ? baObj.dailyAttendanceCommissionRate : settings.defaultAttendanceRate;
+    const dailyRate = baObj ? baObj.dailyCommissionRate : settings.defaultDailyRate; // $13.50
 
-    let isEligibleForAttendance = false;
-    let attendancePercent = 0;
-    let isEligibleForDailySales = false;
+    // NEW SIMPLE LOGIC:
+    // - Present or Late = $13.50
+    // - Sick/Activation (approved by team leader) = $13.50
+    // - Absent or pending exceptions = $0
 
-    if (record.status === 'present') {
-      isEligibleForAttendance = true;
-      attendancePercent = 100;
-      isEligibleForDailySales = true;
-    } else if (record.status === 'late') {
-      const lateRule = settings.exceptionRules.late;
-      isEligibleForAttendance = lateRule.eligible;
-      attendancePercent = lateRule.commissionPercent;
-      isEligibleForDailySales = true;
+    let isEligible = false;
+
+    if (record.status === 'present' || record.status === 'late') {
+      // Present or late = eligible for full commission
+      isEligible = true;
     } else if (
       record.status === 'sick' ||
       record.status === 'activation' ||
       record.status === 'business_duty' ||
-      record.status === 'leave' ||
-      record.status === 'public_holiday' ||
-      record.status === 'rest_day'
+      record.status === 'public_holiday'
     ) {
-      // Exceptions only count if approved!
+      // Exceptions ONLY count if approved by team leader (consultant)
       if (record.exceptionApprovalStatus === 'approved') {
         const ruleKey = record.status as keyof typeof settings.exceptionRules;
         const rule = settings.exceptionRules[ruleKey];
-        if (rule) {
-          isEligibleForAttendance = rule.eligible;
-          attendancePercent = rule.commissionPercent;
-          isEligibleForDailySales = rule.eligible && rule.commissionPercent > 0;
-        }
+        isEligible = rule && rule.eligible;
       } else {
-        // Pending or rejected exceptions receive 0 commission
-        isEligibleForAttendance = false;
-        attendancePercent = 0;
-        isEligibleForDailySales = false;
+        // Pending or no approval = NOT eligible = $0
+        isEligible = false;
       }
     } else {
-      // Absent, pending_review without approved exception
-      isEligibleForAttendance = false;
-      attendancePercent = 0;
-      isEligibleForDailySales = false;
+      // Absent, leave, rest_day, pending_review = $0
+      isEligible = false;
     }
 
-    // Method A: Daily Commission
-    const dailyCommission = isEligibleForDailySales ? dailyRate * (attendancePercent / 100) : 0;
-
-    // Method B: Attendance-based Commission: (Eligible days count x rate)
-    // For a single day, if eligible: attendanceRate * (attendancePercent / 100)
-    const attendanceCommission = isEligibleForAttendance ? attendanceRate * (attendancePercent / 100) : 0;
-
-    // Calculate total based on organisation policy setting
-    let total = 0;
-    if (settings.calculationMethod === 'method_a') {
-      total = dailyCommission + (record.manualAdjustments || 0);
-    } else if (settings.calculationMethod === 'method_b') {
-      total = attendanceCommission + (record.manualAdjustments || 0);
-    } else {
-      // Method C: Total = Daily + Attendance + Adjustments
-      total = dailyCommission + attendanceCommission + (record.manualAdjustments || 0);
-    }
+    // Simple calculation: If eligible, get daily rate. If not, get $0
+    const dailyCommission = isEligible ? dailyRate : 0;
+    const total = dailyCommission + (record.manualAdjustments || 0);
 
     return {
       daily: Math.round(dailyCommission * 100) / 100,
-      attendance: Math.round(attendanceCommission * 100) / 100,
+      attendance: 0, // Not used anymore
       total: Math.round(total * 100) / 100,
     };
   },
@@ -258,7 +308,8 @@ export const DataService = {
   processQrScan(
     qrToken: string,
     actorName: string = 'Scan Operator',
-    actorRole: 'admin' | 'consultant' | 'operator' = 'operator'
+    actorRole: 'admin' | 'consultant' | 'operator' = 'operator',
+    signatureDataUrl?: string
   ): {
     success: boolean;
     actionTaken: 'CLOCK_IN' | 'CLOCK_OUT' | 'ALREADY_COMPLETED' | 'DUPLICATE_SCAN' | 'REVOKED' | 'INVALID';
@@ -327,6 +378,7 @@ export const DataService = {
         isCompleted: false,
         missingClockOut: false,
         isLate,
+        signatureDataUrl: signatureDataUrl || undefined,
         calculatedDailyCommission: 0,
         calculatedAttendanceCommission: 0,
         manualAdjustments: 0,
@@ -348,6 +400,13 @@ export const DataService = {
       newRecord.totalEarned = comm.total;
 
       currentState.attendanceRecords.unshift(newRecord);
+
+      // Save to database API if available
+      if (useDatabaseAPI) {
+        APIService.createAttendanceRecordAPI(newRecord).catch(err => {
+          console.error('Failed to save attendance to database:', err);
+        });
+      }
 
       this.logAudit({
         actor: actorName,
@@ -404,6 +463,13 @@ export const DataService = {
         user: actorName,
       });
 
+      // Save to database API if available
+      if (useDatabaseAPI) {
+        APIService.updateAttendanceRecordAPI(record).catch(err => {
+          console.error('Failed to update attendance in database:', err);
+        });
+      }
+
       this.logAudit({
         actor: actorName,
         actorRole,
@@ -425,11 +491,92 @@ export const DataService = {
     }
 
     // Scenario 3: Record already completed for today
+    if (record.clockInTime && record.clockOutTime) {
+      return {
+        success: false,
+        actionTaken: 'ALREADY_COMPLETED',
+        message: `${ba.fullName} already clocked in (${record.clockInTime}) and clocked out (${record.clockOutTime}) today. Session already completed.`,
+        record,
+        ba,
+      };
+    }
+
+    // Scenario 4: Record exists but has no clock-in (corrupted data) -> Delete and allow re-clock-in
+    // This handles the bug where null times exist
+    const recordIndex = currentState.attendanceRecords.findIndex(r => r.id === record.id);
+    if (recordIndex !== -1) {
+      currentState.attendanceRecords.splice(recordIndex, 1);
+    }
+
+    // Now treat as new clock-in
+    const isLate = isTimeLate(currentTime, currentState.commissionSettings.reportingTimeCutoff);
+    const status: AttendanceStatus = isLate ? 'late' : 'present';
+
+    const newRecord: AttendanceRecord = {
+      id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      date: todayDate,
+      baId: ba.baId,
+      baInternalId: ba.id,
+      baName: ba.fullName,
+      category: ba.category,
+      region: ba.region,
+      branch: ba.branch,
+      salesConsultantId: ba.salesConsultantId,
+      salesConsultantName: ba.salesConsultantName,
+      clockInTime: currentTime,
+      clockOutTime: null,
+      totalHours: 0,
+      status,
+      source: 'qr_scan',
+      isCompleted: false,
+      missingClockOut: false,
+      isLate,
+      signatureDataUrl: signatureDataUrl || undefined,
+      calculatedDailyCommission: 0,
+      calculatedAttendanceCommission: 0,
+      manualAdjustments: 0,
+      totalEarned: 0,
+      notes: isLate ? `Clocked in after cutoff ${currentState.commissionSettings.reportingTimeCutoff}` : undefined,
+      history: [
+        {
+          timestamp: currentTimestamp,
+          action: `Clocked In via QR Scan (${status.toUpperCase()}) - Replaced corrupted record`,
+          user: actorName,
+        },
+      ],
+    };
+
+    // Calculate initial projected commission
+    const comm = this.calculateCommissionForRecord(newRecord, currentState.commissionSettings, ba);
+    newRecord.calculatedDailyCommission = comm.daily;
+    newRecord.calculatedAttendanceCommission = comm.attendance;
+    newRecord.totalEarned = comm.total;
+
+    currentState.attendanceRecords.unshift(newRecord);
+
+    // Save to database API if available
+    if (useDatabaseAPI) {
+      APIService.createAttendanceRecordAPI(newRecord).catch(err => {
+        console.error('Failed to save attendance to database:', err);
+      });
+    }
+
+    this.logAudit({
+      actor: actorName,
+      actorRole,
+      action: 'CLOCK_IN',
+      targetId: newRecord.id,
+      targetType: 'ATTENDANCE',
+      details: `${ba.fullName} (${ba.baId}) clocked in at ${currentTime} at ${ba.branch}. Status: ${status.toUpperCase()}. (Replaced corrupted record)`,
+    });
+
+    saveState(currentState);
+
     return {
-      success: false,
-      actionTaken: 'ALREADY_COMPLETED',
-      message: `${ba.fullName} already clocked in (${record.clockInTime}) and clocked out (${record.clockOutTime}) today. Session already completed.`,
-      record,
+      success: true,
+      actionTaken: 'CLOCK_IN',
+      message: `Successfully clocked in ${ba.fullName} at ${currentTime} CAT. ${isLate ? '(Flagged: Late arrival)' : '(On time)'}`,
+      record: newRecord,
       ba,
     };
   },
@@ -1036,6 +1183,243 @@ export const DataService = {
       targetId: reportType,
       targetType: 'REPORT',
       details: `Exported CSV report ${filename} (${csv.length} bytes).`,
+    });
+  },
+
+  // DOWNLOAD ATTENDANCE REGISTER WITH SIGNATURES AS HTML
+  downloadAttendanceRegisterWithSignatures(
+    dateFilter?: string,
+    regionFilter?: string,
+    consultantFilter?: string,
+    actorName: string = 'Admin'
+  ): void {
+    const date = dateFilter || getZimbabweDate();
+    const allBAs = this.getBAs();
+    const attendanceRecords = currentState.attendanceRecords.filter(r => {
+      if (r.date !== date) return false;
+      if (regionFilter && regionFilter !== 'All' && r.region !== regionFilter) return false;
+      if (consultantFilter && consultantFilter !== 'All' && r.salesConsultantId !== consultantFilter) return false;
+      return true;
+    });
+
+    // Create a map of BA attendance
+    const attendanceMap = new Map<string, AttendanceRecord>();
+    attendanceRecords.forEach(r => {
+      attendanceMap.set(r.baId, r);
+    });
+
+    // Get all BAs that should be on this register (filtered by region/consultant)
+    const relevantBAs = allBAs.filter(ba => {
+      if (ba.status !== 'active') return false;
+      if (regionFilter && regionFilter !== 'All' && ba.region !== regionFilter) return false;
+      if (consultantFilter && consultantFilter !== 'All' && ba.salesConsultantId !== consultantFilter) return false;
+      return true;
+    });
+
+    // Build HTML document
+    let html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Econet Wireless - Attendance Register ${date}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      font-size: 12px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+      border-bottom: 3px solid #2563eb;
+      padding-bottom: 15px;
+    }
+    .header h1 {
+      color: #2563eb;
+      margin: 5px 0;
+      font-size: 24px;
+    }
+    .header p {
+      margin: 3px 0;
+      color: #64748b;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th {
+      background-color: #2563eb;
+      color: white;
+      padding: 10px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    td {
+      padding: 8px;
+      border-bottom: 1px solid #e2e8f0;
+      vertical-align: middle;
+    }
+    tr:nth-child(even) {
+      background-color: #f8fafc;
+    }
+    .signature-cell {
+      width: 150px;
+      text-align: center;
+    }
+    .signature-img {
+      max-width: 140px;
+      max-height: 60px;
+      border: 1px solid #cbd5e1;
+      background: white;
+    }
+    .status-present {
+      color: #059669;
+      font-weight: bold;
+    }
+    .status-late {
+      color: #d97706;
+      font-weight: bold;
+    }
+    .status-absent {
+      color: #dc2626;
+      font-weight: bold;
+    }
+    .status-exception {
+      color: #7c3aed;
+      font-weight: bold;
+    }
+    .no-signature {
+      color: #94a3b8;
+      font-style: italic;
+      font-size: 10px;
+    }
+    @media print {
+      .no-print { display: none; }
+      body { margin: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>ECONET WIRELESS ZIMBABWE</h1>
+    <h2>Daily Attendance Register</h2>
+    <p><strong>Date:</strong> ${date}</p>
+    <p><strong>Generated:</strong> ${getZimbabweTimestamp()}</p>
+    ${regionFilter && regionFilter !== 'All' ? `<p><strong>Region:</strong> ${regionFilter}</p>` : ''}
+    ${consultantFilter && consultantFilter !== 'All' ? `<p><strong>Consultant:</strong> ${this.getConsultants().find(c => c.id === consultantFilter)?.name || consultantFilter}</p>` : ''}
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>BA ID</th>
+        <th>Full Name</th>
+        <th>Branch</th>
+        <th>Clock In</th>
+        <th>Clock Out</th>
+        <th>Hours</th>
+        <th>Status</th>
+        <th>Signature</th>
+      </tr>
+    </thead>
+    <tbody>
+`;
+
+    // Add rows for each BA
+    relevantBAs.forEach((ba, index) => {
+      const record = attendanceMap.get(ba.baId);
+      
+      if (record) {
+        // BA has attendance record
+        const statusClass = 
+          record.status === 'present' ? 'status-present' :
+          record.status === 'late' ? 'status-late' :
+          record.status === 'absent' ? 'status-absent' :
+          'status-exception';
+
+        const signatureHtml = record.signatureDataUrl 
+          ? `<img src="${record.signatureDataUrl}" alt="Signature" class="signature-img" />`
+          : `<span class="no-signature">No signature</span>`;
+
+        html += `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${record.baId}</td>
+        <td>${record.baName}</td>
+        <td>${record.branch}</td>
+        <td>${record.clockInTime || '-'}</td>
+        <td>${record.clockOutTime || '-'}</td>
+        <td>${record.totalHours > 0 ? record.totalHours.toFixed(2) : '-'}</td>
+        <td class="${statusClass}">${record.status.toUpperCase()}</td>
+        <td class="signature-cell">${signatureHtml}</td>
+      </tr>`;
+      } else {
+        // BA is ABSENT - no record for today
+        html += `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${ba.baId}</td>
+        <td>${ba.fullName}</td>
+        <td>${ba.branch}</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td class="status-absent">ABSENT</td>
+        <td class="signature-cell"><span class="no-signature">Not present</span></td>
+      </tr>`;
+      }
+    });
+
+    html += `
+    </tbody>
+  </table>
+
+  <div style="margin-top: 40px; page-break-before: always;">
+    <p style="color: #64748b; font-size: 11px;">
+      <strong>Summary:</strong> Total BAs: ${relevantBAs.length} | 
+      Present: ${attendanceRecords.filter(r => r.status === 'present' || r.status === 'late').length} | 
+      Absent: ${relevantBAs.length - attendanceRecords.length} | 
+      Exceptions: ${attendanceRecords.filter(r => r.status !== 'present' && r.status !== 'late' && r.status !== 'absent').length}
+    </p>
+    <p style="color: #64748b; font-size: 10px; margin-top: 20px;">
+      This is an official Econet Wireless attendance register. All signatures are digitally captured.
+    </p>
+  </div>
+
+  <script>
+    // Auto print dialog
+    window.onload = function() {
+      setTimeout(function() {
+        window.print();
+      }, 500);
+    };
+  </script>
+</body>
+</html>`;
+
+    // Create blob and download
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Econet_Attendance_Register_${date}_with_signatures.html`);
+    link.setAttribute('target', '_blank');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    this.logAudit({
+      actor: actorName,
+      actorRole: 'admin',
+      action: 'REPORT_EXPORTED',
+      targetId: 'attendance_register_html',
+      targetType: 'REPORT',
+      details: `Exported Attendance Register with signatures for ${date} (HTML format, ${relevantBAs.length} BAs).`,
     });
   },
 };

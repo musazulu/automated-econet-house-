@@ -36,7 +36,7 @@ export const CommissionManagement: React.FC<CommissionManagementProps> = ({
   const [selectedMethod, setSelectedMethod] = useState<CommissionMethod>(settings.calculationMethod);
   const [defaultDaily, setDefaultDaily] = useState<number>(settings.defaultDailyRate);
   const [defaultAtt, setDefaultAtt] = useState<number>(settings.defaultAttendanceRate);
-  const [reportingCutoff, setReportingCutoff] = useState<string>(settings.reportingTimeCutoff);
+  const reportingCutoff = '08:00';
 
   // Exception rules
   const [sickEligible, setSickEligible] = useState<boolean>(settings.exceptionRules.sick.eligible);
@@ -291,10 +291,7 @@ export const CommissionManagement: React.FC<CommissionManagementProps> = ({
                     <th className="py-3 px-4">Brand Ambassador</th>
                     <th className="py-3 px-3">Team / Consultant</th>
                     <th className="py-3 px-3 text-center">Eligible Days</th>
-                    <th className="py-3 px-3 text-right">Daily Rate</th>
-                    <th className="py-3 px-3 text-right">Att. Rate</th>
-                    <th className="py-3 px-3 text-right">Daily Comm ($)</th>
-                    <th className="py-3 px-3 text-right">Att. Comm ($)</th>
+                    <th className="py-3 px-3 text-right">Daily Commission ($)</th>
                     <th className="py-3 px-3 text-right">Adjustments ($)</th>
                     <th className="py-3 px-4 text-right">Total Payout ($)</th>
                   </tr>
@@ -329,20 +326,8 @@ export const CommissionManagement: React.FC<CommissionManagementProps> = ({
                           </span>
                         </td>
 
-                        <td className="py-3 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
-                          {formatCurrency(s.dailyRate)}
-                        </td>
-
-                        <td className="py-3 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
-                          {formatCurrency(s.attendanceRate)}
-                        </td>
-
-                        <td className="py-3 px-3 text-right font-mono font-semibold text-slate-800 whitespace-nowrap">
+                        <td className="py-3 px-3 text-right font-mono font-bold text-blue-700 text-sm whitespace-nowrap">
                           {formatCurrency(s.dailyCommission)}
-                        </td>
-
-                        <td className="py-3 px-3 text-right font-mono font-semibold text-slate-800 whitespace-nowrap">
-                          {formatCurrency(s.attendanceCommission)}
                         </td>
 
                         <td className="py-3 px-3 text-right font-mono font-semibold text-slate-800 whitespace-nowrap">
@@ -568,17 +553,10 @@ export const CommissionManagement: React.FC<CommissionManagementProps> = ({
             </div>
 
             <div>
-              <label className="font-semibold text-slate-700 block mb-1">
-                Morning Reporting Cutoff Time (CAT)
-              </label>
-              <input
-                type="text"
-                placeholder="08:15"
-                value={reportingCutoff}
-                onChange={e => setReportingCutoff(e.target.value)}
-                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono"
-                required
-              />
+              <span className="font-semibold text-slate-700 block mb-1">Arrival policy (CAT)</span>
+              <div className="w-full p-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-700">
+                On time at or before 08:00; late after 08:00
+              </div>
             </div>
           </div>
 

@@ -48,10 +48,11 @@ export const BaRegistrationModal: React.FC<BaRegistrationModalProps> = ({
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -92,8 +93,9 @@ export const BaRegistrationModal: React.FC<BaRegistrationModalProps> = ({
       qrGeneratedAt: baToEdit?.qrGeneratedAt || getZimbabweTimestamp(),
     };
 
+    setIsSaving(true);
     try {
-      const saved = DataService.saveBA(baData, actorName);
+      const saved = await DataService.saveBA(baData, actorName);
       setSuccess(isEditing ? 'BA profile updated successfully.' : 'New BA registered and secure QR token created.');
       onSaved(saved);
       setTimeout(() => {
@@ -102,6 +104,8 @@ export const BaRegistrationModal: React.FC<BaRegistrationModalProps> = ({
       }, 1200);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to save BA.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -317,9 +321,10 @@ export const BaRegistrationModal: React.FC<BaRegistrationModalProps> = ({
             </button>
             <button
               type="submit"
+              disabled={isSaving}
               className="px-5 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs"
             >
-              {isEditing ? 'Save Changes' : 'Register BA & Issue Card'}
+              {isSaving ? 'Saving…' : isEditing ? 'Save Changes' : 'Register BA & Issue Card'}
             </button>
           </div>
         </form>

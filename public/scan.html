@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Econet BA Attendance Scan</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #2563eb, #1e40af);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 28px;
+            font-weight: bold;
+            margin: 0 auto 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #1e293b;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #64748b;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+
+        .status {
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .status.loading {
+            background: #f1f5f9;
+            border: 2px solid #cbd5e1;
+        }
+
+        .status.success {
+            background: #dcfce7;
+            border: 2px solid #22c55e;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e2e8f0;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .status-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #1e293b;
+        }
+
+        .status-message {
+            font-size: 14px;
+            color: #64748b;
+            line-height: 1.5;
+        }
+
+        .ba-info {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+
+        .ba-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 13px;
+        }
+
+        .ba-info-row:last-child {
+            border-bottom: none;
+        }
+
+        .ba-info-label {
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .ba-info-value {
+            color: #1e293b;
+            font-weight: 600;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #64748b;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        .instruction {
+            background: #fef3c7;
+            border: 2px solid #fbbf24;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .instruction-title {
+            font-weight: 600;
+            color: #92400e;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .instruction-text {
+            color: #78350f;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .ba-select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            margin-bottom: 15px;
+            color: #1e293b;
+        }
+
+        .ba-select:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">E</div>
+        <h1>Econet BA Attendance</h1>
+        <p class="subtitle">Brand Ambassador Clock-In/Out System</p>
+
+        <div id="app">
+            <!-- Content will be inserted here by JavaScript -->
+        </div>
+    </div>
+
+    <script>
+        // Get station token from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const stationToken = urlParams.get('token') || urlParams.get('station');
+        
+        const app = document.getElementById('app');
+
+        // Sample BA data - In production, this would come from backend
+        const sampleBAs = [
+            { id: 'BA-001', token: 'ECO_TOKEN_001', name: 'Tendai Moyo', branch: 'Harare Central' },
+            { id: 'BA-002', token: 'ECO_TOKEN_002', name: 'Farai Chihuri', branch: 'Harare Central' },
+            { id: 'BA-003', token: 'ECO_TOKEN_003', name: 'Chipo Mutasa', branch: 'Chitungwiza' },
+            { id: 'BA-004', token: 'ECO_TOKEN_004', name: 'Nomalanga Ndlovu', branch: 'Bulawayo' },
+            { id: 'BA-005', token: 'ECO_TOKEN_005', name: 'Nyasha Chiweshe', branch: 'Harare South' },
+        ];
+
+        function showLoading() {
+            app.innerHTML = `
+                <div class="status loading">
+                    <div class="spinner"></div>
+                    <div class="status-title">Processing Your Scan...</div>
+                    <div class="status-message">Please wait while we record your attendance</div>
+                </div>
+            `;
+        }
+
+        function showBaSelection() {
+            app.innerHTML = `
+                <div class="instruction">
+                    <div class="instruction-title">⚠️ Testing Mode</div>
+                    <div class="instruction-text">
+                        In production, you would be automatically identified. For testing, please select your name:
+                    </div>
+                </div>
+
+                <select class="ba-select" id="baSelect">
+                    <option value="">-- Select Your Name --</option>
+                    ${sampleBAs.map(ba => `
+                        <option value="${ba.token}">${ba.name} (${ba.id})</option>
+                    `).join('')}
+                </select>
+
+                <button class="btn btn-primary" onclick="submitScan()" id="submitBtn" disabled>
+                    Record My Attendance
+                </button>
+
+                <button class="btn btn-secondary" onclick="goBack()">
+                    Cancel
+                </button>
+            `;
+
+            const select = document.getElementById('baSelect');
+            const submitBtn = document.getElementById('submitBtn');
+            
+            select.addEventListener('change', () => {
+                submitBtn.disabled = !select.value;
+            });
+        }
+
+        function showSuccess(data) {
+            const ba = sampleBAs.find(b => b.token === data.baToken);
+            const time = new Date().toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false 
+            });
+
+            app.innerHTML = `
+                <div class="status success">
+                    <div class="icon">✅</div>
+                    <div class="status-title">Success!</div>
+                    <div class="status-message">${data.action === 'CLOCK_IN' ? 'Clock-In' : 'Clock-Out'} recorded successfully</div>
+                    
+                    ${ba ? `
+                        <div class="ba-info">
+                            <div class="ba-info-row">
+                                <span class="ba-info-label">Name:</span>
+                                <span class="ba-info-value">${ba.name}</span>
+                            </div>
+                            <div class="ba-info-row">
+                                <span class="ba-info-label">BA ID:</span>
+                                <span class="ba-info-value">${ba.id}</span>
+                            </div>
+                            <div class="ba-info-row">
+                                <span class="ba-info-label">Branch:</span>
+                                <span class="ba-info-value">${ba.branch}</span>
+                            </div>
+                            <div class="ba-info-row">
+                                <span class="ba-info-label">Time:</span>
+                                <span class="ba-info-value">${time} CAT</span>
+                            </div>
+                            <div class="ba-info-row">
+                                <span class="ba-info-label">Action:</span>
+                                <span class="ba-info-value">${data.action === 'CLOCK_IN' ? '🟢 Clocked In' : '🔴 Clocked Out'}</span>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <button class="btn btn-primary" onclick="location.href='/'">
+                    Done
+                </button>
+            `;
+        }
+
+        function showError(message) {
+            app.innerHTML = `
+                <div class="status error">
+                    <div class="icon">❌</div>
+                    <div class="status-title">Error</div>
+                    <div class="status-message">${message}</div>
+                </div>
+
+                <button class="btn btn-primary" onclick="showBaSelection()">
+                    Try Again
+                </button>
+
+                <button class="btn btn-secondary" onclick="goBack()">
+                    Cancel
+                </button>
+            `;
+        }
+
+        function submitScan() {
+            const baToken = document.getElementById('baSelect').value;
+            if (!baToken) return;
+
+            showLoading();
+
+            // Simulate API call - In production, this would be a real API request
+            setTimeout(() => {
+                // Try to communicate with parent window (if opened from the app)
+                if (window.opener) {
+                    try {
+                        const event = new CustomEvent('ba-scanned-attendance-qr', {
+                            detail: { 
+                                baQrToken: baToken,
+                                stationToken: stationToken 
+                            }
+                        });
+                        window.opener.dispatchEvent(event);
+                        
+                        // Show success
+                        showSuccess({
+                            baToken: baToken,
+                            action: Math.random() > 0.5 ? 'CLOCK_IN' : 'CLOCK_OUT'
+                        });
+
+                        // Close this window after 3 seconds
+                        setTimeout(() => {
+                            window.close();
+                        }, 3000);
+                    } catch (error) {
+                        console.error('Error communicating with parent:', error);
+                        showSuccess({
+                            baToken: baToken,
+                            action: 'CLOCK_IN'
+                        });
+                    }
+                } else {
+                    // Standalone mode - just show success
+                    showSuccess({
+                        baToken: baToken,
+                        action: 'CLOCK_IN'
+                    });
+                }
+            }, 1500);
+        }
+
+        function goBack() {
+            if (window.opener) {
+                window.close();
+            } else {
+                window.history.back();
+            }
+        }
+
+        // Initialize
+        if (!stationToken) {
+            showError('Invalid scan - no station token found. Please scan the QR code again.');
+        } else {
+            showBaSelection();
+        }
+    </script>
+</body>
+</html>
