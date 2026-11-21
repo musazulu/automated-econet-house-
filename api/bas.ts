@@ -82,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (user.role === 'ba') {
       rows = await sql`
         SELECT * FROM brand_ambassadors
-        WHERE lower(ba_id) = ${user.baId || ''}
+        WHERE lower(ba_id) = ${(user.baId || '').toLowerCase()}
         ORDER BY full_name
       `;
     } else if (user.role === 'consultant') {

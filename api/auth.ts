@@ -152,7 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             role <> 'ba'
             OR EXISTS (
               SELECT 1 FROM brand_ambassadors b
-              WHERE lower(b.ba_id) = auth_accounts.ba_id AND b.status = 'active'
+              WHERE lower(b.ba_id) = lower(auth_accounts.ba_id) AND b.status = 'active'
             )
           )
         LIMIT 1

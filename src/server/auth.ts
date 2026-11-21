@@ -126,7 +126,7 @@ export const getAuthenticatedUser = async (
         a.role <> 'ba'
         OR EXISTS (
           SELECT 1 FROM brand_ambassadors b
-          WHERE lower(b.ba_id) = a.ba_id AND b.status = 'active'
+          WHERE lower(b.ba_id) = lower(a.ba_id) AND b.status = 'active'
         )
       )
     LIMIT 1
